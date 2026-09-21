@@ -1,11 +1,18 @@
+import asyncio
+import logging
 import os
-print("FILES IN COGS:", sorted(os.listdir(os.path.dirname(os.path.abspath(__file__)))))
+import sys
+
 import discord
 from discord.ext import commands
 
-import config
-import utils
-from database import Database
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+import config  # noqa: E402
+import utils  # noqa: E402
+from database import Database  # noqa: E402
 
 log = logging.getLogger("orbit")
 
@@ -22,6 +29,13 @@ EXTENSIONS = [
 ]
 
 
+def extension_path(name):
+    """Works whether the cog files are next to main.py or inside a 'cogs' folder."""
+    if os.path.exists(os.path.join(BASE_DIR, "cogs", f"{name}.py")):
+        return f"cogs.{name}"
+    return name
+
+
 class OrbitBot(commands.Bot):
     def __init__(self):
         super().__init__(
@@ -35,8 +49,15 @@ class OrbitBot(commands.Bot):
 
     async def setup_hook(self):
         await self.db.connect()
-        for extension in EXTENSIONS:
-            await self.load_extension(extension)
+        failed = []
+        for name in EXTENSIONS:
+            try:
+                await self.load_extension(extension_path(name))
+            except Exception:
+                failed.append(name)
+                log.exception("Could not load %s", name)
+        if failed:
+            log.error("These files failed to load: %s", ", ".join(failed))
         await self.tree.sync()
 
     async def close(self):
