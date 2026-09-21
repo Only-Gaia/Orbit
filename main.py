@@ -4,6 +4,7 @@ import discord
 from discord.ext import commands
 
 import config
+import utils
 from database import Database
 
 log = logging.getLogger("orbit")
