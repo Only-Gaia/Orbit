@@ -1,6 +1,5 @@
-import asyncio
-import logging
-
+import os
+print("FILES IN COGS:", sorted(os.listdir(os.path.dirname(os.path.abspath(__file__)))))
 import discord
 from discord.ext import commands
 
