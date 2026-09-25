@@ -176,6 +176,32 @@ class Giveaways(commands.Cog):
         except discord.HTTPException:
             pass
 
+    # ------------------------------------------------------- autocomplete ---
+    async def _giveaway_choices(self, interaction: discord.Interaction, current: str, statuses):
+        """Build autocomplete choices: shows the giveaway's PRIZE (name), value is its internal id."""
+        guild_id = interaction.guild.id if interaction.guild else None
+        placeholders = ",".join("?" for _ in statuses)
+        rows = await self.bot.db.fetchall(
+            f"SELECT id, prize FROM giveaways WHERE guild_id = ? AND status IN ({placeholders}) "
+            "ORDER BY id DESC LIMIT 50",
+            (guild_id, *statuses),
+        )
+        current = (current or "").lower()
+        choices = []
+        for r in rows:
+            label = f"{r['prize']} (#{r['id']})"
+            if current in r["prize"].lower() or current in str(r["id"]):
+                choices.append(app_commands.Choice(name=label[:100], value=r["id"]))
+        return choices[:25]
+
+    async def active_giveaway_autocomplete(self, interaction: discord.Interaction, current: str):
+        # /giveaway end only makes sense on giveaways still running
+        return await self._giveaway_choices(interaction, current, ("active",))
+
+    async def cancellable_giveaway_autocomplete(self, interaction: discord.Interaction, current: str):
+        # /giveaway cancel makes sense on anything not already cancelled
+        return await self._giveaway_choices(interaction, current, ("active", "ended"))
+
     # ------------------------------------------------------ background loop ---
     @tasks.loop(seconds=5)
     async def checker(self):
@@ -426,9 +452,9 @@ class Giveaways(commands.Cog):
     @commands.guild_only()
     async def giveaway(self, ctx):
         await ctx.send(embed=utils.err(
-            f"Usage: `{config.PREFIX}giveaway create`, `{config.PREFIX}giveaway cancel <id>`, "
-            f"`{config.PREFIX}giveaway end <id>`. With slash commands (`/giveaway create`) Discord shows "
-            f"every option for you."), ephemeral=True)
+            f"Usage: `{config.PREFIX}giveaway create`, `{config.PREFIX}giveaway cancel <name>`, "
+            f"`{config.PREFIX}giveaway end <name>`. With slash commands (`/giveaway create`) Discord shows "
+            f"every option for you, and `end`/`cancel` let you pick the giveaway by its name."), ephemeral=True)
 
     @giveaway.command(name="create", description="Start a giveaway.")
     @app_commands.describe(
@@ -475,7 +501,9 @@ class Giveaways(commands.Cog):
         await ctx.send(embed=utils.ok(f"Giveaway **#{gid}** created in {channel.mention}. [Jump]({message.jump_url})"))
 
     @giveaway.command(name="cancel", description="Cancel a giveaway.")
-    @app_commands.describe(giveaway_id="The giveaway number (shown in its footer)")
+    @app_commands.describe(giveaway_id="The giveaway to cancel (start typing its name)")
+    @app_commands.rename(giveaway_id="giveaway")
+    @app_commands.autocomplete(giveaway_id=cancellable_giveaway_autocomplete)
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def giveaway_cancel(self, ctx, giveaway_id: int):
@@ -493,10 +521,12 @@ class Giveaways(commands.Cog):
                 await self.edit_message(
                     gw, gw["result_message_id"], view=None,
                     embed=utils.make_embed("🚫 | GIVEAWAY CANCELLED", f"## 🎁 {gw['prize']}", config.COLOR_ERR))
-        await ctx.send(embed=utils.ok(f"Giveaway **#{giveaway_id}** cancelled."))
+        await ctx.send(embed=utils.ok(f"Giveaway **{gw['prize']}** (#{giveaway_id}) cancelled."))
 
     @giveaway.command(name="end", description="End a giveaway right now and pick the winners.")
-    @app_commands.describe(giveaway_id="The giveaway number (shown in its footer)")
+    @app_commands.describe(giveaway_id="The giveaway to end now (start typing its name)")
+    @app_commands.rename(giveaway_id="giveaway")
+    @app_commands.autocomplete(giveaway_id=active_giveaway_autocomplete)
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def giveaway_end(self, ctx, giveaway_id: int):
@@ -505,7 +535,7 @@ class Giveaways(commands.Cog):
             return await ctx.send(embed=utils.err("Active giveaway not found."), ephemeral=True)
         await self.bot.db.execute("UPDATE giveaways SET end_time = ? WHERE id = ?", (int(time.time()), giveaway_id))
         await self.end_giveaway(giveaway_id)
-        await ctx.send(embed=utils.ok(f"Giveaway **#{giveaway_id}** ended."))
+        await ctx.send(embed=utils.ok(f"Giveaway **{gw['prize']}** (#{giveaway_id}) ended."))
 
 
 async def setup(bot):
